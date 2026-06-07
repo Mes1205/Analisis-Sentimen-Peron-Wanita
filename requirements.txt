@@ -1,0 +1,6 @@
+streamlit
+torch
+scikit-learn
+PySastrawi
+nltk
+numpy
