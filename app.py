@@ -15,9 +15,6 @@ nltk.download('punkt', quiet=True)
 nltk.download('punkt_tab', quiet=True)
 nltk.download('stopwords', quiet=True)
 
-# ============================================================
-# ANFIS MODEL — harus sama persis dengan notebook
-# ============================================================
 
 class ANFISClassifier(nn.Module):
     def __init__(self, input_dim, mf_counts, num_classes=3, seed=42):
@@ -65,12 +62,9 @@ class ANFISClassifier(nn.Module):
         return normalized @ self.rule_logits
 
 
-# ============================================================
-# LOAD MODEL
-# ============================================================
-
 MODEL_PATH      = "anfis_model.pt"
 COMPONENTS_PATH = "components.pkl"
+
 
 @st.cache_resource
 def load_all():
@@ -88,10 +82,6 @@ def load_all():
 
     return model, comp
 
-
-# ============================================================
-# PREPROCESSING — FIX: kata negasi TIDAK dihapus
-# ============================================================
 
 kamus_normalisasi = {
     'gw': 'aku', 'gue': 'aku', 'w': 'aku', 'aq': 'aku',
@@ -142,7 +132,6 @@ kamus_normalisasi = {
     'krl': 'kereta rel listrik', 'blkng': 'belakang',
 }
 
-# Kata negasi yang wajib dipertahankan
 KATA_NEGASI = {'tidak', 'bukan', 'belum', 'jangan', 'tanpa', 'kurang', 'nggak'}
 
 
@@ -152,8 +141,6 @@ def load_nlp():
     stemmer          = factory_stemmer.create_stemmer()
     factory_stopword = StopWordRemoverFactory()
     stop_words       = set(factory_stopword.get_stop_words())
-
-    # FIX: keluarkan kata negasi dari stopwords
     stop_words -= KATA_NEGASI
 
     custom_sw = {
@@ -165,7 +152,7 @@ def load_nlp():
         'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k',
         'wkwkwk', 'kwkwk', 'hahaha', 'hihi', 'xixi'
     }
-    custom_sw -= KATA_NEGASI  # pastikan negasi tidak ada di custom stopwords
+    custom_sw -= KATA_NEGASI
 
     return stemmer, stop_words.union(custom_sw)
 
@@ -202,10 +189,6 @@ def preprocess(text, stemmer, all_stopwords):
     return ' '.join(tokens)
 
 
-# ============================================================
-# FITUR MANUAL — FIX: 8 fitur termasuk negated_positive/negative
-# ============================================================
-
 kata_positif = {
     'bagus', 'baik', 'keren', 'mantap', 'suka', 'senang', 'hebat', 'indah',
     'cantik', 'enak', 'nyaman', 'puas', 'rekomen', 'worth', 'murah',
@@ -215,7 +198,7 @@ kata_positif = {
     'top', 'joss', 'mantep', 'original', 'ori', 'aesthetic', 'recommended',
     'luar', 'ganteng', 'oke', 'pas', 'hits', 'bersih', 'aman', 'berkualitas',
     'istimewa', 'memukau', 'menakjubkan', 'terbaik', 'favorit',
-    'andalan', 'unggulan', 'premium', 'spesial', 'unik', 'menarik', 'kreatif',
+    'andalan', 'unggulan', 'premium', 'unik', 'menarik', 'kreatif',
     'helpful', 'informatif', 'bermanfaat', 'makasih', 'thanks',
 }
 
@@ -226,7 +209,7 @@ kata_negatif = {
     'menyesal', 'komplain', 'keluhan', 'bermasalah', 'masalah', 'error',
     'worst', 'bad', 'terrible', 'awful', 'hate', 'boring', 'spam',
     'penipuan', 'scam', 'nipu', 'nyebelin', 'sebel', 'kesal', 'marah',
-    'ribet', 'susah', 'sulit', 'kurang', 'ancur', 'sampah', 'busuk',
+    'ribet', 'susah', 'sulit', 'ancur', 'sampah', 'busuk',
     'kotor', 'berbahaya', 'beracun', 'iritasi', 'alergi', 'sakit',
     'mual', 'pusing', 'efek', 'samping', 'mengkhawatirkan', 'kacau',
 }
@@ -235,7 +218,6 @@ kata_negasi_set = {'tidak', 'bukan', 'belum', 'jangan', 'tanpa', 'kurang', 'ngga
 
 
 def extract_manual_features(text):
-    """8 fitur manual — sama persis dengan notebook FIXED."""
     words    = str(text).lower().split()
     word_set = set(words)
     total    = len(words) + 1e-8
@@ -249,12 +231,11 @@ def extract_manual_features(text):
     neg_ratio = neg_count / total
     coverage  = (pos_count + neg_count) / total
 
-    # Fitur negasi kontekstual
     negated_pos = 0
     negated_neg = 0
     for i, w in enumerate(words):
         if w in kata_negasi_set:
-            window = words[i+1:i+3]
+            window = words[i+1:i+4]
             if any(ww in kata_positif for ww in window):
                 negated_pos = 1
             if any(ww in kata_negatif for ww in window):
@@ -264,45 +245,74 @@ def extract_manual_features(text):
             float(negated_pos), float(negated_neg)]
 
 
-# ============================================================
-# PREDICT
-# ============================================================
+def lexicon_score(preprocessed_text):
+    """
+    Hitung skor berbasis lexicon langsung dari teks yang sudah dipreprocess.
+    Returns: (prior array [Neg, Net, Pos], confidence weight)
+    """
+    words = str(preprocessed_text).lower().split()
+    pos_count = sum(1 for w in words if w in kata_positif)
+    neg_count = sum(1 for w in words if w in kata_negatif)
+    total_lex = pos_count + neg_count
+
+    negated_pos = any(
+        words[i] in kata_negasi_set and
+        any(w in kata_positif for w in words[i+1:i+4])
+        for i in range(len(words))
+    )
+    negated_neg = any(
+        words[i] in kata_negasi_set and
+        any(w in kata_negatif for w in words[i+1:i+4])
+        for i in range(len(words))
+    )
+
+    if total_lex == 0:
+        return np.array([0.33, 0.34, 0.33]), 0.15
+
+    if negated_pos and not negated_neg:
+        return np.array([0.70, 0.20, 0.10]), 0.80
+    elif negated_neg and not negated_pos:
+        return np.array([0.10, 0.20, 0.70]), 0.80
+    elif pos_count > neg_count:
+        strength = pos_count / (total_lex + 1e-8)
+        prior = np.array([0.05, 0.15, 0.80]) * strength + np.array([0.20, 0.45, 0.35]) * (1 - strength)
+        return prior / prior.sum(), 0.55 + 0.25 * strength
+    elif neg_count > pos_count:
+        strength = neg_count / (total_lex + 1e-8)
+        prior = np.array([0.80, 0.15, 0.05]) * strength + np.array([0.35, 0.45, 0.20]) * (1 - strength)
+        return prior / prior.sum(), 0.55 + 0.25 * strength
+    else:
+        return np.array([0.30, 0.40, 0.30]), 0.25
+
 
 def predict(text, model, comp, stemmer, all_stopwords):
     preprocessed = preprocess(text, stemmer, all_stopwords)
 
+    manual_feats  = np.array([extract_manual_features(preprocessed)], dtype='float32')
+    manual_scaled = comp['manual_scaler'].transform(manual_feats)
+
     word_prob = comp['word_clf'].predict_proba(comp['word_tfidf'].transform([preprocessed]))
     char_prob = comp['char_clf'].predict_proba(comp['char_tfidf'].transform([preprocessed]))
     text_prob = (word_prob + char_prob) / 2
-
-    manual_feats  = np.array([extract_manual_features(preprocessed)], dtype='float32')
-    manual_scaled = comp['manual_scaler'].transform(manual_feats)
 
     X        = np.hstack([manual_scaled, text_prob]).astype('float32')
     X_tensor = torch.tensor(X)
 
     with torch.no_grad():
         logits = model(X_tensor)
-        probs  = torch.softmax(logits, dim=1).numpy()[0]
+        anfis_probs = torch.softmax(logits, dim=1).numpy()[0]
 
-    multiplier = comp['best_multiplier']
+    lex_prior, lex_weight = lexicon_score(preprocessed)
+    anfis_weight = 1.0 - lex_weight
 
-    # Fallback: kalau multiplier seragam, pakai TF-IDF saja
-    if np.std(multiplier) < 0.01:
-        adjusted = text_prob[0]
-    else:
-        adjusted = probs * multiplier
-
-    pred_class = np.argmax(adjusted)
-    norm_probs = adjusted / adjusted.sum()
+    final_probs = anfis_weight * anfis_probs + lex_weight * lex_prior
+    final_probs = final_probs / final_probs.sum()
 
     labels = ['Negatif', 'Netral', 'Positif']
-    return labels[pred_class], norm_probs, preprocessed
+    pred_class = int(np.argmax(final_probs))
 
+    return labels[pred_class], final_probs, preprocessed
 
-# ============================================================
-# UI STREAMLIT
-# ============================================================
 
 st.set_page_config(page_title="Analisis Sentimen", page_icon="💬", layout="centered")
 
@@ -335,4 +345,3 @@ if st.button("🔍 Analisis", use_container_width=True) and text_input.strip():
         st.write("**Teks asli:**", text_input)
         st.write("**Setelah preprocessing:**",
                  preprocessed if preprocessed.strip() else "*(kosong setelah preprocessing)*")
-        st.write("**Best multiplier:**", comp['best_multiplier'])
